@@ -1,6 +1,6 @@
 #!/usr/bin/env python2
 
-import sys, argparse, requests, re, os, yaml
+import sys, argparse, requests, re, os, yaml, getpass, subprocess
 
 def parseToken(url):
 	token = re.search('(?<=#access_token=)[^&]*', url)
@@ -44,15 +44,23 @@ if __name__ == '__main__':
 	else:
 		cfg = file('config.yaml', 'r')
 		config = yaml.load(cfg)
+		cfg.close()
+		if args.user == None:
+			username = raw_input("Enter Username: ")
+		else:
+			uername = args.user
+		if args.pssw == None:
+			password = getpass.getpass("Enter Password: ")
+		else:
+			password = args.pssw
 		print "Getting access token..."
-		access_token = getAccessToken(args.user, args.pssw, sisi)
+		access_token = getAccessToken(username, password, sisi)
 		print "Getting SSO token..."
 		sso_token = getSSOToken(access_token, sisi)
 		if sisi:
 			print "Starting Singularity"
-			startcmd = "wine %s /noconsole /ssoToken=%s /triPlatform=dx9 /server:singularity" % (config['paths'][1], sso_token)
+			subprocess.Popen(['/usr/bin/env', 'wine', config['paths'][1], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
 		else:
 			print "Starting Tranquility"
-			startcmd = "wine %s /noconsole /ssoToken=%s /triPlatform=dx9" % (config['paths'][0], sso_token)
-		cfg.close()
-		os.system(startcmd)
+			subprocess.Popen(['/usr/bin/env', 'wine', config['paths'][0], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+		
