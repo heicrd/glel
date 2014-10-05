@@ -48,7 +48,7 @@ if __name__ == '__main__':
 		if args.user == None:
 			username = raw_input("Enter Username: ")
 		else:
-			uername = args.user
+			username = args.user
 		if args.pssw == None:
 			password = getpass.getpass("Enter Password: ")
 		else:
@@ -63,4 +63,3 @@ if __name__ == '__main__':
 		else:
 			print "Starting Tranquility"
 			subprocess.Popen(['/usr/bin/env', 'wine', config['paths'][0], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
-		
