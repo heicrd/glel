@@ -43,7 +43,7 @@ def getSSOToken(access_token, sisi):
 	r = requests.get(uri)
 	sso_token = parseToken(r.url)
 	return sso_token
-	
+
 def setupSettings(config):
 	if not 'paths' in config:
 		config['paths'] = {}
@@ -65,7 +65,7 @@ if __name__ == '__main__':
 	sisi = args.singularity
 	config = shelve.open("settings.db", writeback=True)
 	setupSettings(config)
-	
+
 	if not 'master' in config or args.new_master:
 		one = getpass.getpass("Enter new key: ")
 		two = getpass.getpass("Confirm: ")
@@ -73,27 +73,27 @@ if __name__ == '__main__':
 			config['master'] = pbkdf2_sha256.encrypt(one, rounds=100000)
 		else:
 			raise Exception("Passwords must match")
-	
+
 	if args.key == None:
 		key = getpass.getpass("Enter Key: ")
 	else:
 		key = args.key
-	
+
 	if not pbkdf2_sha256.verify(key, config['master']):
 		raise Exception("Incorrect master key")
 	else:
 		key = hashlib.sha256(key).digest()
-		
+
 	if args.ptranq != None:
 		config['paths']['tq'] = args.ptranq
 	if args.psisi != None:
 		config['paths']['sisi'] = args.psisi
-		
+
 	if args.user == None:
 		username = raw_input("Enter Username: ")
 	else:
 		username = args.user
-	
+
 	if args.add:
 		newuser = username
 		newpass = getpass.getpass("Enter Password for %s: " % newuser)
@@ -103,7 +103,7 @@ if __name__ == '__main__':
 		else:
 			raise Exception("Passwords must match")
 		sys.exit()
-	
+
 	if args.delete:
 		deluser = username
 		confirm = raw_input("Confirm delete %s [y/n]: " % deluser)
@@ -113,24 +113,19 @@ if __name__ == '__main__':
 			except KeyError:
 				raise KeyError("User not found")
 		sys.exit()
-		
-	if args.user == None:
-		username = raw_input("Enter Username: ")
-	else:
-		username = args.user
-	
+
 	if args.pssw != None:
-		password = args.pssw	
+		password = args.pssw
 	elif username in config['accounts']:
 		password = decrypt(config['accounts'][username], key)
 	else:
 		password = getpass.getpass("Enter Password: ")
-	
+
 	print "Getting access token..."
 	access_token = getAccessToken(username, password, sisi)
 	print "Getting SSO token..."
 	sso_token = getSSOToken(access_token, sisi)
-	
+
 	if sisi:
 		print "Starting Singularity"
 		subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['sisi'], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
@@ -138,4 +133,3 @@ if __name__ == '__main__':
 		print "Starting Tranquility"
 		subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['tq'], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
 
-	config.close()
