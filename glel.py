@@ -3,6 +3,7 @@
 import sys, argparse, requests, re, os, shelve, getpass, subprocess, hashlib
 from Crypto.Cipher import AES
 from passlib.hash import pbkdf2_sha256
+from urllib import quote as quote
 
 def pad(text):
     return text + b"\0" * (AES.block_size - len(text) % AES.block_size)
@@ -24,7 +25,7 @@ def parseToken(url):
 	return token.group(0)
 
 def getAccessToken(username, password, sisi):
-	data = "UserName=%s&Password=%s" % (username, password)
+	data = "UserName=%s&Password=%s" % (username, quote(password))
 	if sisi:
 		uri = 'https://sisilogin.testeveonline.com/Account/LogOn?ReturnUrl=%2Foauth%2Fauthorize%2F%3Fclient_id%3DeveLauncherTQ%26lang%3Den%26response_type%3Dtoken%26redirect_uri%3Dhttps%3A%2F%2Fsisilogin.testeveonline.com%2Flauncher%3Fclient_id%3DeveLauncherTQ%26scope%3DeveClientToken'
 		headers = {'Origin': 'https://sisilogin.testeveonline.com', 'Referer': uri, 'Content-type': 'application/x-www-form-urlencoded'}
