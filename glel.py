@@ -1,22 +1,31 @@
 #!/usr/bin/env python2
 
-import sys, argparse, requests, re, os, shelve, getpass, subprocess, hashlib
+import sys
+import os
+import argparse
+import requests
+import re
+import shelve
+import getpass
+import subprocess
+import hashlib
+import urllib
+
 from Crypto.Cipher import AES
 from passlib.hash import pbkdf2_sha256
-from urllib import quote as quote
 
 def pad(text):
     return text + b"\0" * (AES.block_size - len(text) % AES.block_size)
 
-def encrypt(password, masterkey, key_size=256):
+def encrypt(password, key, key_size=256):
     padded = pad(password)
     iv = os.urandom(AES.block_size)
-    cipher = AES.new(masterkey, AES.MODE_CBC, iv)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
     return iv + cipher.encrypt(padded)
 
-def decrypt(encrypted, masterkey):
+def decrypt(encrypted, key):
     iv = encrypted[:AES.block_size]
-    cipher = AES.new(masterkey, AES.MODE_CBC, iv)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted = cipher.decrypt(encrypted[AES.block_size:])
     return decrypted.rstrip(b"\0")
 
@@ -25,7 +34,7 @@ def parseToken(url):
 	return token.group(0)
 
 def getAccessToken(username, password, sisi):
-	data = "UserName=%s&Password=%s" % (username, quote(password))
+	data = urllib.urlencode({'UserName':username, 'Password':password})
 	if sisi:
 		uri = 'https://sisilogin.testeveonline.com/Account/LogOn?ReturnUrl=%2Foauth%2Fauthorize%2F%3Fclient_id%3DeveLauncherTQ%26lang%3Den%26response_type%3Dtoken%26redirect_uri%3Dhttps%3A%2F%2Fsisilogin.testeveonline.com%2Flauncher%3Fclient_id%3DeveLauncherTQ%26scope%3DeveClientToken'
 		headers = {'Origin': 'https://sisilogin.testeveonline.com', 'Referer': uri, 'Content-type': 'application/x-www-form-urlencoded'}
@@ -51,86 +60,145 @@ def setupSettings(config):
 	if not 'accounts' in config:
 		config['accounts'] = {}
 
-if __name__ == '__main__':
+def setKey(config):
+	key = getpass.getpass("Enter new key: ")
+	key2 = getpass.getpass("Confirm: ")
+	try:
+		if key == key2:
+			config['key'] = pbkdf2_sha256.encrypt(key, rounds=100000)
+			print "Deleting account data"
+			config['accounts'].clear()
+		else:
+			raise Exception("Passwords must match")
+	except:
+		print "Passwords must match"
+		setKey(config)
+	print "Key set. Exiting."
+	sys.exit()
+
+def getKey(key, config):
+	if key is None:
+		ikey = getpass.getpass("Enter Key: ")
+	else:
+		ikey = key
+
+	if pbkdf2_sha256.verify(ikey, config['key']):
+		rkey = hashlib.sha256(ikey).digest()
+	else:
+		raise Exception("Incorrect key")
+
+	return rkey
+
+def getPass(password, username=None, config=None, key=None):
+	if password is not None:
+		rpass = password
+
+	elif config is not None:
+		if key is not None and username is not None and username in config['accounts']:
+			rpass = decrypt(config['accounts'][username], key)
+		elif key is None and username is not None and username in config['accounts']:
+			key = getKey(key, config)
+			rpass = decrypt(config['accounts'][username], key)
+		else:
+			print "User not in database"
+			rpass = getpass.getpass("Enter Password: ")
+
+	else:
+		print "User not in database"
+		rpass = getpass.getpass("Enter Password: ")
+
+	return rpass
+
+def addAcct(newuser, newpass, key, config):
+	if newpass is None:
+		newpass = getpass.getpass("Enter Password for %s: " % newuser)
+		newpass2 = getpass.getpass("Confirm: ")
+
+		try:
+			if newpass == newpass2:
+				config['accounts'][newuser] = encrypt(newpass, key)
+			else:
+				raise Exception("Passwords must match")
+		except:
+			print "Passwords must match"
+			addAcct(newuser, key, config, newpass)
+
+	else:
+		config['accounts'][newuser] = encrypt(newpass, key)
+
+def delAcct(user, config, confirm):
+	if confirm is None:
+		confirm = raw_input("Confirm delete %s [y/n]: " % user)
+	if 'y' in confirm:
+		try:
+			config['accounts'][user] = os.urandom(64)
+			config['accounts'].pop(user)
+		except KeyError:
+			raise KeyError("User not found")
+	else:
+		print "Aborted."
+		sys.exit()
+
+def launch(username, password, config, sisi):
+	print "Getting access token..."
+	accessToken = getAccessToken(username, password, sisi)
+	print "Getting SSO token..."
+	ssoToken = getSSOToken(accessToken, sisi)
+	try:
+		if sisi:
+			print "Starting Singularity"
+			subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['sisi'], '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+		else:
+			print "Starting Tranquility"
+			subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['tq'], '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+	except KeyError:
+		raise KeyError("EVE Online not found")
+
+def main():
 	par = argparse.ArgumentParser(description='steals accounts')
 	par.add_argument('-a', '--add', action='store_true', help="Store an account")
-	par.add_argument('-d', '--delete', action='store_true', help="Delete an account")
+	par.add_argument('-d', '--delete', dest='delete', action='store_true', help="Delete an account")
 	par.add_argument('-s', '--singularity', action='store_true', help="Use Singularity")
 	par.add_argument('-pt', '--ptranq', help="Tranquility Exefile")
 	par.add_argument('-ps', '--psisi', help="Singularity Exefile")
 	par.add_argument('-u', '--user', help="EVE Online Username")
-	par.add_argument('-p', '--pssw', help="EVE Online Password")
-	par.add_argument('--new-master', action='store_true', help="Set a new master key")
+	par.add_argument('-p', '--pass', dest='pssw', help="EVE Online Password")
+	par.add_argument('--new-key', action='store_true', help="Set a new key")
 	par.add_argument('-k', '--key', help="Encryption key")
+	par.add_argument('-y', '--yes', action='store_const', const="yes", help="Bypass deletion confirmation")
+	par.add_argument('-nc', '--no-check', action='store_true', help="Do not check settings for account password")
 	args = par.parse_args()
 	sisi = args.singularity
 	config = shelve.open("settings.db", writeback=True)
 	setupSettings(config)
 
-	if not 'master' in config or args.new_master:
-		one = getpass.getpass("Enter new key: ")
-		two = getpass.getpass("Confirm: ")
-		if one == two:
-			config['master'] = pbkdf2_sha256.encrypt(one, rounds=100000)
-		else:
-			raise Exception("Passwords must match")
+	if not 'key' in config or args.new_key:
+		setKey(config)
 
-	if args.key == None:
-		key = getpass.getpass("Enter Key: ")
+	if args.user is not None:
+		username = args.user
 	else:
-		key = args.key
+		username = raw_input("Enter Username: ")
 
-	if not pbkdf2_sha256.verify(key, config['master']):
-		raise Exception("Incorrect master key")
-	else:
-		key = hashlib.sha256(key).digest()
-
-	if args.ptranq != None:
+	if args.ptranq is not None:
 		config['paths']['tq'] = args.ptranq
-	if args.psisi != None:
+	if args.psisi is not None:
 		config['paths']['sisi'] = args.psisi
 
-	if args.user == None:
-		username = raw_input("Enter Username: ")
-	else:
-		username = args.user
-
 	if args.add:
-		newuser = username
-		newpass = getpass.getpass("Enter Password for %s: " % newuser)
-		newpass2 = getpass.getpass("Confirm: ")
-		if newpass == newpass2:
-			config['accounts'][newuser] = encrypt(newpass, key)
-		else:
-			raise Exception("Passwords must match")
-		sys.exit()
+		key = getKey(args.key, config)
+		addAcct(username, args.pssw, key, config)
 
 	if args.delete:
-		deluser = username
-		confirm = raw_input("Confirm delete %s [y/n]: " % deluser)
-		if 'y' in confirm:
-			try:
-				config['accounts'].pop(deluser)
-			except KeyError:
-				raise KeyError("User not found")
-		sys.exit()
+		delAcct(username, config, args.yes)
 
-	if args.pssw != None:
-		password = args.pssw
-	elif username in config['accounts']:
-		password = decrypt(config['accounts'][username], key)
-	else:
-		password = getpass.getpass("Enter Password: ")
+	if args.delete == False and args.add == False:
+		if args.no_check == False:
+			key = getKey(args.key, config)
+			password = getPass(args.pssw, username, config, key)
+		else:
+			password = getpass.getpass("Enter Password: ")
+		launch(username, password, config, sisi)
 
-	print "Getting access token..."
-	access_token = getAccessToken(username, password, sisi)
-	print "Getting SSO token..."
-	sso_token = getSSOToken(access_token, sisi)
-
-	if sisi:
-		print "Starting Singularity"
-		subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['sisi'], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
-	else:
-		print "Starting Tranquility"
-		subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['tq'], '/noconsole', '/ssoToken=%s'%sso_token, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
-
+if __name__ == '__main__':
+	main()
