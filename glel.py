@@ -15,19 +15,19 @@ from Crypto.Cipher import AES
 from passlib.hash import pbkdf2_sha256
 
 def pad(text):
-    return text + b"\0" * (AES.block_size - len(text) % AES.block_size)
+	return text + b"\0" * (AES.block_size - len(text) % AES.block_size)
 
 def encrypt(password, key, key_size=256):
-    padded = pad(password)
-    iv = os.urandom(AES.block_size)
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    return iv + cipher.encrypt(padded)
+	padded = pad(password)
+	iv = os.urandom(AES.block_size)
+	cipher = AES.new(key, AES.MODE_CBC, iv)
+	return iv + cipher.encrypt(padded)
 
 def decrypt(encrypted, key):
-    iv = encrypted[:AES.block_size]
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    decrypted = cipher.decrypt(encrypted[AES.block_size:])
-    return decrypted.rstrip(b"\0")
+	iv = encrypted[:AES.block_size]
+	cipher = AES.new(key, AES.MODE_CBC, iv)
+	decrypted = cipher.decrypt(encrypted[AES.block_size:])
+	return decrypted.rstrip(b"\0")
 
 def parseToken(url):
 	token = re.search('(?<=#access_token=)[^&]*', url)
@@ -111,17 +111,17 @@ def getPass(password, username=None, config=None, key=None):
 
 def addAcct(newuser, newpass, key, config):
 	if newpass is None:
-		newpass = getpass.getpass("Enter Password for %s: " % newuser)
+		newpass1 = getpass.getpass("Enter Password for %s: " % newuser)
 		newpass2 = getpass.getpass("Confirm: ")
-
+		
 		try:
-			if newpass == newpass2:
-				config['accounts'][newuser] = encrypt(newpass, key)
+			if newpass1 == newpass2:
+				config['accounts'][newuser] = encrypt(newpass1, key)
 			else:
 				raise Exception("Passwords must match")
 		except:
 			print "Passwords must match"
-			addAcct(newuser, key, config, newpass)
+			addAcct(newuser, newpass, key, config)
 
 	else:
 		config['accounts'][newuser] = encrypt(newpass, key)
