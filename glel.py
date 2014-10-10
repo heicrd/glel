@@ -194,8 +194,9 @@ def main():
 
 	if args.delete == False and args.add == False:
 		if args.no_check == False:
-			key = getKey(args.key, config)
-			password = getPass(args.pssw, username, config, key)
+			password = getPass(args.pssw, username, config, args.key)
+		elif args.pssw is not None:
+			password = args.pssw
 		else:
 			password = getpass.getpass("Enter Password: ")
 		launch(username, password, config, sisi)
