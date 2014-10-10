@@ -113,7 +113,7 @@ def addAcct(newuser, newpass, key, config):
 	if newpass is None:
 		newpass1 = getpass.getpass("Enter Password for %s: " % newuser)
 		newpass2 = getpass.getpass("Confirm: ")
-		
+
 		try:
 			if newpass1 == newpass2:
 				config['accounts'][newuser] = encrypt(newpass1, key)
