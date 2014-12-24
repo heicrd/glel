@@ -17,13 +17,23 @@ from passlib.hash import pbkdf2_sha256
 def pad(text):
 	return text + b"\0" * (AES.block_size - len(text) % AES.block_size)
 
-def encrypt(password, key, key_size=256):
+def encrypt(password, key_size=256):
+	global key
+	try:
+		key
+	except NameError:
+		key = getKey()
 	padded = pad(password)
 	iv = os.urandom(AES.block_size)
 	cipher = AES.new(key, AES.MODE_CBC, iv)
 	return iv + cipher.encrypt(padded)
 
-def decrypt(encrypted, key):
+def decrypt(encrypted):
+	global key
+	try:
+		key
+	except NameError:
+		key = getKey()
 	iv = encrypted[:AES.block_size]
 	cipher = AES.new(key, AES.MODE_CBC, iv)
 	decrypted = cipher.decrypt(encrypted[AES.block_size:])
@@ -54,95 +64,86 @@ def getSSOToken(access_token, sisi):
 	sso_token = parseToken(r.url)
 	return sso_token
 
-def setupSettings(config):
+def setupSettings():
 	if not 'paths' in config:
 		config['paths'] = {}
 	if not 'accounts' in config:
 		config['accounts'] = {}
 
-def setKey(config):
-	key = getpass.getpass("Enter new key: ")
+def setKey():
+	key1 = getpass.getpass("Enter new key: ")
 	key2 = getpass.getpass("Confirm: ")
 	try:
-		if key == key2:
-			config['key'] = pbkdf2_sha256.encrypt(key, rounds=100000)
+		if key1 == key2:
+			config['key'] = pbkdf2_sha256.encrypt(key1, rounds=100000)
 			print "Deleting account data"
 			config['accounts'].clear()
 		else:
 			raise Exception("Passwords must match")
 	except:
 		print "Passwords must match"
-		setKey(config)
+		setKey()
 	print "Key set. Exiting."
 	sys.exit()
 
-def getKey(key, config):
-	if key is None:
+def getKey():
+	if args.key is None:
 		ikey = getpass.getpass("Enter Key: ")
 	else:
-		ikey = key
-
+		return args.key
 	if pbkdf2_sha256.verify(ikey, config['key']):
 		rkey = hashlib.sha256(ikey).digest()
 	else:
 		raise Exception("Incorrect key")
-
 	return rkey
 
-def getPass(password, username=None, config=None, key=None):
+def getPass(password, username=None):
 	if password is not None:
 		rpass = password
-
 	elif config is not None:
 		if key is not None and username is not None and username in config['accounts']:
-			rpass = decrypt(config['accounts'][username], key)
+			rpass = decrypt(config['accounts'][username])
 		elif key is None and username is not None and username in config['accounts']:
-			key = getKey(key, config)
-			rpass = decrypt(config['accounts'][username], key)
+			rpass = decrypt(config['accounts'][username])
 		else:
 			print "User not in database"
 			rpass = getpass.getpass("Enter Password: ")
-
 	else:
 		print "User not in database"
 		rpass = getpass.getpass("Enter Password: ")
-
 	return rpass
 
-def addAcct(newuser, newpass, key, config):
+def addAcct(newuser, newpass):
 	if newpass is None:
 		newpass1 = getpass.getpass("Enter Password for %s: " % newuser)
 		newpass2 = getpass.getpass("Confirm: ")
-
 		try:
 			if newpass1 == newpass2:
-				config['accounts'][newuser] = encrypt(newpass1, key)
+				config['accounts'][newuser] = encrypt(newpass1)
 			else:
 				raise Exception("Passwords must match")
-		except:
-			print "Passwords must match"
-			addAcct(newuser, newpass, key, config)
-
+		except Exception, e:
+			print e
+			addAcct(newuser, newpass)
 	else:
-		config['accounts'][newuser] = encrypt(newpass, key)
+		config['accounts'][newuser] = encrypt(newpass)
 
-def delAcct(user, config, confirm):
+def delAcct(user, confirm):
 	if confirm is None:
 		confirm = raw_input("Confirm delete %s [y/n]: " % user)
 	if 'y' in confirm:
 		try:
 			config['accounts'][user] = os.urandom(64)
 			config['accounts'].pop(user)
+			config.sync()
 		except KeyError:
 			raise KeyError("User not found")
 	else:
 		print "Aborted."
 		sys.exit()
 
-def launch(username, password, config, sisi):
-	print "Getting access token..."
+def launch(username, password, sisi):
 	accessToken = getAccessToken(username, password, sisi)
-	print "Getting SSO token..."
 	ssoToken = getSSOToken(accessToken, sisi)
 	try:
 		if sisi:
@@ -154,10 +155,10 @@ def launch(username, password, config, sisi):
 	except KeyError:
 		raise KeyError("EVE Online not found")
 
-def main():
+if __name__ == '__main__':
 	par = argparse.ArgumentParser(description='steals accounts')
 	par.add_argument('-a', '--add', action='store_true', help="Store an account")
-	par.add_argument('-d', '--delete', dest='delete', action='store_true', help="Delete an account")
+	par.add_argument('-r', '--remove', dest='delete', action='store_true', help="Removes an account")
 	par.add_argument('-s', '--singularity', action='store_true', help="Use Singularity")
 	par.add_argument('-pt', '--ptranq', help="Tranquility Exefile")
 	par.add_argument('-ps', '--psisi', help="Singularity Exefile")
@@ -167,13 +168,14 @@ def main():
 	par.add_argument('-k', '--key', help="Encryption key")
 	par.add_argument('-y', '--yes', action='store_const', const="yes", help="Bypass deletion confirmation")
 	par.add_argument('-nc', '--no-check', action='store_true', help="Do not check settings for account password")
+	par.add_argument('-d', '--debug', action='store_true', help="Do not log into EVE Online")
 	args = par.parse_args()
 	sisi = args.singularity
 	config = shelve.open("settings.db", writeback=True)
-	setupSettings(config)
+	setupSettings()
 
 	if not 'key' in config or args.new_key:
-		setKey(config)
+		setKey()
 
 	if args.user is not None:
 		username = args.user
@@ -186,20 +188,16 @@ def main():
 		config['paths']['sisi'] = args.psisi
 
 	if args.add:
-		key = getKey(args.key, config)
-		addAcct(username, args.pssw, key, config)
+		addAcct(username, args.pssw)
 
 	if args.delete:
-		delAcct(username, config, args.yes)
+		delAcct(username, args.yes)
 
-	if args.delete == False and args.add == False:
+	if args.delete is False and args.add is False and args.debug is False:
 		if args.no_check == False:
-			password = getPass(args.pssw, username, config, args.key)
+			password = getPass(args.pssw, username)
 		elif args.pssw is not None:
 			password = args.pssw
 		else:
 			password = getpass.getpass("Enter Password: ")
-		launch(username, password, config, sisi)
-
-if __name__ == '__main__':
-	main()
+		launch(username, password, sisi)
