@@ -1,11 +1,12 @@
 #!/usr/bin/env python2
+# -*- coding: utf-8 -*-
 
 import sys
 import os
 import argparse
 import requests
 import re
-import shelve
+import sqlite3
 import getpass
 import subprocess
 import hashlib
@@ -64,53 +65,48 @@ def getSSOToken(access_token, sisi):
 	sso_token = parseToken(r.url)
 	return sso_token
 
-def setupSettings():
-	if not 'paths' in config:
-		config['paths'] = {}
-	if not 'accounts' in config:
-		config['accounts'] = {}
-
 def setKey():
 	key1 = getpass.getpass("Enter new key: ")
 	key2 = getpass.getpass("Confirm: ")
 	try:
 		if key1 == key2:
-			config['key'] = pbkdf2_sha256.encrypt(key1, rounds=100000)
+			cur.execute("INSERT OR REPLACE INTO Thing VALUES(?, ?)", ('Key', pbkdf2_sha256.encrypt(key1, rounds=100000)))
 			print "Deleting account data"
-			config['accounts'].clear()
+			cur.execute("DELETE FROM Accounts")
+			conn.commit()
 		else:
 			raise Exception("Passwords must match")
-	except:
-		print "Passwords must match"
-		setKey()
+	except Exception, e:
+		print e
+		conn.close()
+		sys.exit(1)
 	print "Key set. Exiting."
-	sys.exit()
+	conn.close()
+	sys.exit(0)
 
 def getKey():
 	if args.key is None:
 		ikey = getpass.getpass("Enter Key: ")
 	else:
-		return args.key
-	if pbkdf2_sha256.verify(ikey, config['key']):
+		ikey = args.key
+	cur.execute("SELECT * FROM Thing WHERE Which='Key'")
+	if pbkdf2_sha256.verify(ikey, cur.fetchone()[1]):
 		rkey = hashlib.sha256(ikey).digest()
 	else:
 		raise Exception("Incorrect key")
 	return rkey
 
-def getPass(password, username=None):
+def getPass(username=None, password=None):
 	if password is not None:
 		rpass = password
-	elif config is not None:
-		if key is not None and username is not None and username in config['accounts']:
-			rpass = decrypt(config['accounts'][username])
-		elif key is None and username is not None and username in config['accounts']:
-			rpass = decrypt(config['accounts'][username])
+	else:
+		cur.execute("SELECT * FROM Accounts WHERE User = ?", (username,))
+		info = cur.fetchone()
+		if username is not None and info is not None:
+			rpass = decrypt(info[1])
 		else:
 			print "User not in database"
 			rpass = getpass.getpass("Enter Password: ")
-	else:
-		print "User not in database"
-		rpass = getpass.getpass("Enter Password: ")
 	return rpass
 
 def addAcct(newuser, newpass):
@@ -119,28 +115,33 @@ def addAcct(newuser, newpass):
 		newpass2 = getpass.getpass("Confirm: ")
 		try:
 			if newpass1 == newpass2:
-				config['accounts'][newuser] = encrypt(newpass1)
+				cur.execute("INSERT OR REPLACE INTO Accounts VALUES(?, ?)", (newuser, buffer(encrypt(newpass1))))
+				conn.commit()
 			else:
 				raise Exception("Passwords must match")
 		except Exception, e:
 			print e
 			addAcct(newuser, newpass)
 	else:
-		config['accounts'][newuser] = encrypt(newpass)
+		cur.execute("INSERT OR REPLACE INTO Accounts VALUES(?, ?)", (newuser, buffer(encrypt(newpass1))))
+		conn.commit()
 
 def delAcct(user, confirm):
 	if confirm is None:
 		confirm = raw_input("Confirm delete %s [y/n]: " % user)
 	if 'y' in confirm:
 		try:
-			config['accounts'][user] = os.urandom(64)
-			config['accounts'].pop(user)
-			config.sync()
+			print "deleting %s" % user
+			cur.execute("DELETE FROM Accounts WHERE User = ?", (user,))
+			conn.commit()
+			conn.close()
+			sys.exit(0)
 		except KeyError:
 			raise KeyError("User not found")
 	else:
 		print "Aborted."
-		sys.exit()
+		conn.close()
+		sys.exit(0)
 
 def launch(username, password, sisi):
 	accessToken = getAccessToken(username, password, sisi)
@@ -148,12 +149,16 @@ def launch(username, password, sisi):
 	try:
 		if sisi:
 			print "Starting Singularity"
-			subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['sisi'], '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+			cur.execute("SELECT * FROM Paths WHERE Which='SiSi'")
+			path = cur.fetchone()[1]
+			subprocess.Popen(['/usr/bin/env', 'wine', path, '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
 		else:
 			print "Starting Tranquility"
-			subprocess.Popen(['/usr/bin/env', 'wine', config['paths']['tq'], '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
-	except KeyError:
-		raise KeyError("EVE Online not found")
+			cur.execute("SELECT * FROM Paths WHERE Which='TQ'")
+			path = cur.fetchone()[1]
+			subprocess.Popen(['/usr/bin/env', 'wine', path, '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+	except TypeError:
+		raise TypeError("EVE Online location not set")
 
 if __name__ == '__main__':
 	par = argparse.ArgumentParser(description='steals accounts')
@@ -168,13 +173,31 @@ if __name__ == '__main__':
 	par.add_argument('-k', '--key', help="Encryption key")
 	par.add_argument('-y', '--yes', action='store_const', const="yes", help="Bypass deletion confirmation")
 	par.add_argument('-nc', '--no-check', action='store_true', help="Do not check settings for account password")
-	par.add_argument('-d', '--debug', action='store_true', help="Do not log into EVE Online")
 	args = par.parse_args()
 	sisi = args.singularity
-	config = shelve.open("settings.db", writeback=True)
-	setupSettings()
 
-	if not 'key' in config or args.new_key:
+	try:
+		conn = sqlite3.connect('settings.sqlite')
+		cur = conn.cursor()
+	except:
+		raise Exception("something went wrong opening the settings file")
+
+	cur.executescript("""
+		CREATE TABLE IF NOT EXISTS Thing(Which PRIMARY KEY, What TEXT);
+		CREATE TABLE IF NOT EXISTS Accounts(User PRIMARY KEY, Pass BLOB);
+		""")
+
+	if args.ptranq is not None:
+		cur.execute("INSERT OR REPLACE INTO Thing VALUES(?, ?)", ('TQ', args.ptranq))
+		conn.commit()
+	if args.psisi is not None:
+		cur.execute("INSERT OR REPLACE INTO Thing VALUES(?, ?)", ('SiSi', args.psisi))
+		conn.commit()
+
+	cur.execute("SELECT * FROM Thing WHERE Which='Key'")
+	check = cur.fetchone()
+
+	if check is None or args.new_key:
 		setKey()
 
 	if args.user is not None:
@@ -182,22 +205,19 @@ if __name__ == '__main__':
 	else:
 		username = raw_input("Enter Username: ")
 
-	if args.ptranq is not None:
-		config['paths']['tq'] = args.ptranq
-	if args.psisi is not None:
-		config['paths']['sisi'] = args.psisi
-
 	if args.add:
 		addAcct(username, args.pssw)
 
 	if args.delete:
 		delAcct(username, args.yes)
 
-	if args.delete is False and args.add is False and args.debug is False:
+	if args.delete is False and args.add is False:
 		if args.no_check == False:
-			password = getPass(args.pssw, username)
+			password = getPass(username, args.pssw)
 		elif args.pssw is not None:
 			password = args.pssw
 		else:
 			password = getpass.getpass("Enter Password: ")
-		launch(username, password, sisi)
+		launch(username, password)
+	
+	conn.close()
