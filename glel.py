@@ -149,12 +149,12 @@ def launch(username, password, sisi):
 	try:
 		if sisi:
 			print "Starting Singularity"
-			cur.execute("SELECT * FROM Paths WHERE Which='SiSi'")
+			cur.execute("SELECT * FROM Thing WHERE Which='SiSi'")
 			path = cur.fetchone()[1]
 			subprocess.Popen(['/usr/bin/env', 'wine', path, '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9', '/server:singularity'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
 		else:
 			print "Starting Tranquility"
-			cur.execute("SELECT * FROM Paths WHERE Which='TQ'")
+			cur.execute("SELECT * FROM Thing WHERE Which='TQ'")
 			path = cur.fetchone()[1]
 			subprocess.Popen(['/usr/bin/env', 'wine', path, '/noconsole', '/ssoToken=%s' % ssoToken, '/triPlatform=dx9'], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
 	except TypeError:
@@ -218,6 +218,6 @@ if __name__ == '__main__':
 			password = args.pssw
 		else:
 			password = getpass.getpass("Enter Password: ")
-		launch(username, password)
+		launch(username, password, sisi)
 	
 	conn.close()
